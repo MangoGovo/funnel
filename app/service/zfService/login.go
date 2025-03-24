@@ -1,6 +1,7 @@
 package zfService
 
 import (
+	"bytes"
 	"encoding/json"
 	"funnel/app/apis"
 	"funnel/app/apis/oauth"
@@ -8,11 +9,15 @@ import (
 	"funnel/app/errors"
 	"funnel/app/model"
 	"funnel/app/service"
+	"funnel/app/service/libraryService/request"
 	"funnel/app/utils/fetch"
 	"funnel/config"
 	"github.com/PuerkitoBio/goquery"
+	"github.com/go-resty/resty/v2"
 	"net/http"
 	"strings"
+
+	errorss "errors"
 )
 
 type captchaServerResponse struct {
@@ -82,58 +87,58 @@ func login(username string, password string) (*model.User, error) {
 }
 
 func loginByOauth(username string, password string) (*model.User, error) {
-	f := fetch.Fetch{}
-	f.Init()
-	loginHome, err := f.GetRaw(oauth.OauthLoginHome())
+	client := request.New()
+	loginSuccess := errorss.New("login success")
+	client.SetRedirectPolicy(
+		resty.RedirectPolicyFunc(func(req *http.Request, via []*http.Request) error {
+			// 自定义重定向处理逻辑
+			if req.URL.String() == "http://www.gdjwjf.zjut.edu.cn/jwglxt/xtgl/login_slogin.html" {
+				return loginSuccess
+			}
+			return nil
+		}),
+	)
+
+	resp, err := client.R().Get(oauth.OauthLoginHome())
 	if err != nil {
 		return nil, err
 	}
-	if len(f.Cookie) < 1 {
+
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(resp.Body()))
+	if err != nil {
 		return nil, err
 	}
-	doc, _ := goquery.NewDocumentFromReader(loginHome.Body)
 	hiddenInput := doc.Find("input[type=hidden][name=execution]")
-
 	execution := hiddenInput.AttrOr("value", "")
-	loginData := genOauthLoginData(username, password, execution, &f)
+	loginData := genOauthLoginData(username, password, execution, &client)
+	resp, err = client.R().
+		SetFormData(loginData).
+		Post(resp.RawResponse.Request.URL.String())
 
-	postRedirectUrl, err := f.PostFormRedirect(oauth.OauthLoginHome(), loginData)
-	if err != nil {
+	if err != nil && !errorss.Is(err, loginSuccess) {
 		return nil, err
 	}
-	f.Cookie = []*http.Cookie{}
-	getRedirectUrl1, err := f.GetRedirect(postRedirectUrl.String())
-	if err != nil {
-		return nil, err
-	}
-	getRedirectUrl2, err := f.GetRedirect(getRedirectUrl1.String())
-	if err != nil {
-		return nil, errors.ERR_OAUTH_NOT_UPDATE
-	}
-	getRedirectUrl3, err := f.GetRedirect(getRedirectUrl2.String())
-	if err != nil {
-		return nil, err
-	}
-	getRedirectUrl4, err := f.GetRedirect(getRedirectUrl3.String())
-	if err != nil {
-		return nil, err
-	}
-	_, err = f.Get(getRedirectUrl4.String())
-	if err != nil {
-		return nil, err
-	}
+
+	cookies := resp.Cookies()
+
 	var sessionCookie *http.Cookie
 	var routeCookie *http.Cookie
-	for _, v := range f.Cookie {
-		if v.Name == "JSESSIONID" {
-			sessionCookie = v
+	for _, cookie := range cookies {
+		if cookie.Name == "JSESSIONID" {
+			sessionCookie = cookie
 		}
-		if v.Name == "route" {
-			routeCookie = v
+		if cookie.Name == "route" {
+			routeCookie = cookie
 		}
 	}
 	if sessionCookie == nil {
 		return nil, errors.ERR_UNKNOWN_LOGIN_ERROR
 	}
+
+	// route 参数必要性暂定
+	//if routeCookie == nil {
+	//	return nil, errors.ERR_UNKNOWN_LOGIN_ERROR
+	//}
+
 	return service.SetUser(service.ZFPrefix, username, password, sessionCookie, routeCookie)
 }

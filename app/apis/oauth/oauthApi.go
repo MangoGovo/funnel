@@ -5,5 +5,5 @@ func OauthLoginGetPublickey() string {
 }
 
 func OauthLoginHome() string {
-	return "https://oauth.zjut.edu.cn/cas/login?service=http%3A%2F%2Fwww.gdjw.zjut.edu.cn%2Fsso%2Fzfiotlogin"
+	return "http://www.gdjw.zjut.edu.cn/sso/zfiotlogin"
 }

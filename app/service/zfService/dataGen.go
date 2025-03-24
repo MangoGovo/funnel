@@ -3,6 +3,7 @@ package zfService
 import (
 	"funnel/app/apis/oauth"
 	"funnel/app/apis/zf"
+	"funnel/app/service/libraryService/request"
 	"funnel/app/utils/fetch"
 	"funnel/app/utils/security"
 	"net/url"
@@ -41,17 +42,17 @@ func genLoginData(username, password string, f fetch.Fetch) url.Values {
 		"mm":  {encodePassword}}
 }
 
-func genOauthLoginData(username, password, execution string, f *fetch.Fetch) url.Values {
-	s, _ := f.Get(oauth.OauthLoginGetPublickey())
-
-	encodePassword, _ := security.GetEncryptPassword(s, password)
-	return url.Values{
-		"username":   {username},
-		"mobileCode": {},
-		"password":   {encodePassword},
-		"authcode":   {},
-		"execution":  {execution},
-		"_eventId":   {"submit"}}
+func genOauthLoginData(username, password, execution string, f *request.Client) map[string]string {
+	resp, _ := f.R().Get(oauth.OauthLoginGetPublickey())
+	encodePassword, _ := security.GetEncryptPassword(resp.Body(), password)
+	return map[string]string{
+		"username":   username,
+		"mobileCode": "",
+		"password":   encodePassword,
+		"authcode":   "",
+		"execution":  execution,
+		"_eventId":   "submit",
+	}
 }
 
 func genEmptyRoomReqData(year string, term string, campus string, week string, weekday string, classPeriod string) url.Values {
