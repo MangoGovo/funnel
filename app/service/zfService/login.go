@@ -135,7 +135,7 @@ func loginByOauth(username string, password string) (*model.User, error) {
 		return nil, errors.ERR_UNKNOWN_LOGIN_ERROR
 	}
 
-	// route 参数必要性暂定
+	// route 走 JF 时不需要route
 	//if routeCookie == nil {
 	//	return nil, errors.ERR_UNKNOWN_LOGIN_ERROR
 	//}
