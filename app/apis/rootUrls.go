@@ -20,3 +20,4 @@ var CAPTCHA_NEW_BREAKER_URL string = config.Config.GetString("captcha.new_breake
 var ZF_URL string = config.Config.GetString("zf.url")
 var ZF_Main_URL string = config.Config.GetString("zf.main_url")
 var ZF_BK_URL string = config.Config.GetString("zf.bk_url")
+var ZF_JF_URL string = config.Config.GetString("zf.jf_url")

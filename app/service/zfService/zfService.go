@@ -15,7 +15,9 @@ import (
 )
 
 func GetLessonsTable(stu *model.User, year string, term string) (interface{}, error) {
-	res, err := fetchTermRelatedInfo(stu, zf.ZfClassTable()+stu.Username, year, term, -1)
+	jf := stu.Route.Value == ""
+
+	res, err := fetchTermRelatedInfo(stu, zf.ZfClassTable(jf)+stu.Username, year, term, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -24,7 +26,9 @@ func GetLessonsTable(stu *model.User, year string, term string) (interface{}, er
 	return model.TransformLessonTable(&f), err
 }
 func GetExamInfo(stu *model.User, year string, term string) (interface{}, error) {
-	res, err := fetchTermRelatedInfo(stu, zf.ZfExamInfo(), year, term, 0)
+	jf := stu.Route.Value == ""
+
+	res, err := fetchTermRelatedInfo(stu, zf.ZfExamInfo(jf), year, term, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +44,8 @@ func GetExamInfo(stu *model.User, year string, term string) (interface{}, error)
 	return result, nil
 }
 func GetScoreDetail(stu *model.User, year string, term string) (interface{}, error) {
-	res, err := fetchTermRelatedInfo(stu, zf.ZfScoreDetail(), year, term, -1)
+	jf := stu.Route.Value == ""
+	res, err := fetchTermRelatedInfo(stu, zf.ZfScoreDetail(jf), year, term, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +54,8 @@ func GetScoreDetail(stu *model.User, year string, term string) (interface{}, err
 	return model.TransformScoreDetailInfo(&f), err
 }
 func GetScore(stu *model.User, year string, term string) (interface{}, error) {
-	res, err := fetchTermRelatedInfo(stu, zf.ZfScore(), year, term, -1)
+	jf := stu.Route.Value == ""
+	res, err := fetchTermRelatedInfo(stu, zf.ZfScore(jf), year, term, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +64,8 @@ func GetScore(stu *model.User, year string, term string) (interface{}, error) {
 	return model.TransformScoreInfo(&f), err
 }
 func GetMidTermScore(stu *model.User, year string, term string) (interface{}, error) {
-	res, err := fetchTermRelatedInfo(stu, zf.ZfMinTermScore(), year, term, -1)
+	jf := stu.Route.Value == ""
+	res, err := fetchTermRelatedInfo(stu, zf.ZfMinTermScore(jf), year, term, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -107,11 +114,12 @@ func fetchTermRelatedInfo(stu *model.User, requestUrl, year, term string, examIn
 }
 
 func GetTrainingPrograms(stu *model.User) ([]byte, error) {
+	jf := stu.Route.Value == ""
 	f := fetch.Fetch{}
 	f.Init()
 	f.Cookie = append(f.Cookie, &stu.Session)
 	f.Cookie = append(f.Cookie, &stu.Route)
-	response, err := f.GetRaw(zf.ZfUserInfo())
+	response, err := f.GetRaw(zf.ZfUserInfo(jf))
 
 	if err != nil {
 		return nil, err
@@ -122,8 +130,9 @@ func GetTrainingPrograms(stu *model.User) ([]byte, error) {
 	}
 
 	s, exist := doc.Find("#pyfaxx_id").Attr("value")
+
 	if exist {
-		res, _ := f.GetRaw(zf.ZfPY() + s)
+		res, _ := f.GetRaw(zf.ZfPY(jf) + s)
 		s, _ := ioutil.ReadAll(res.Body)
 		return s, nil
 	}
@@ -150,7 +159,8 @@ func GetEmptyRoomInfo(stu *model.User, year string, term string, campus string, 
 		campus = "A61400B98155D41AE0550113465EF1CF"
 	}
 	requestData := genEmptyRoomReqData(year, term, campus, week, weekday, classPeriod)
-	s, err := f.PostForm(zf.ZfEmptyClassRoom(), requestData)
+	jf := stu.Route.Value == ""
+	s, err := f.PostForm(zf.ZfEmptyClassRoom(jf), requestData)
 
 	if len(s) == 0 {
 		service.ForgetUserByUsername(service.ZFPrefix, stu.Username)
