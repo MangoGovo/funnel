@@ -3,12 +3,12 @@ package sessionpool
 import (
 	"context"
 	"errors"
-	"funnel/comm"
-	zfClient "funnel/httpclient/zf"
+	zfClient "funnel/internal/httpclient/zf"
+	"funnel/internal/svc"
 	"sync"
 	"time"
 
-	"github.com/zjutjh/mygo/nlog"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type CaptchaCookie struct {
@@ -22,17 +22,18 @@ type SessionPool struct {
 	maxSize int                 // channel容量
 	ttl     time.Duration       // cookie过期时间
 	workers int                 // 填充pool的并发数
-	ctx     context.Context
+	zf      *zfClient.ZFClient
 }
 
 var (
-	once sync.Once
-	pool *SessionPool
+	poolOnce     sync.Once
+	poolInstance *SessionPool
 )
 
-func New() *SessionPool {
-	once.Do(func() {
-		conf := comm.BizConf.ZF.SessionPool
+func New(svcCtx *svc.ServiceContext) *SessionPool {
+	cfg := svcCtx.Config.ZF
+	conf := cfg.SessionPool
+	poolOnce.Do(func() {
 		workers := conf.FillWorkers
 		if workers <= 0 {
 			workers = 3
@@ -45,28 +46,26 @@ func New() *SessionPool {
 		if ttlMinute <= 0 {
 			ttlMinute = 30
 		}
-		pool = &SessionPool{
+
+		poolInstance = &SessionPool{
 			cookies: make(chan *CaptchaCookie, maxSize),
 			maxSize: maxSize,
 			ttl:     time.Minute * time.Duration(ttlMinute),
 			workers: workers,
-			ctx:     context.Background(),
+			zf:      zfClient.New(svcCtx),
 		}
 	})
-	return pool
-}
 
-func (p *SessionPool) WithContext(ctx context.Context) *SessionPool {
-	p.ctx = ctx
-	return p
-}
-
-func Pick() *SessionPool {
-	return New()
+	return poolInstance
 }
 
 // Get 获取一个有效 cookie, 阻塞直到超时
 func (p *SessionPool) Get(ctx context.Context) (*zfClient.ZFCookie, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	logger := logx.WithContext(ctx)
 	timeout := time.After(5 * time.Second)
 	for {
 		select {
@@ -74,7 +73,7 @@ func (p *SessionPool) Get(ctx context.Context) (*zfClient.ZFCookie, error) {
 			if time.Since(c.CreatedAt) > p.ttl {
 				continue
 			}
-			nlog.Pick().WithContext(ctx).Info("命中 session pool")
+			logger.Info("命中 session pool")
 			return c.Cookie, nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -86,36 +85,37 @@ func (p *SessionPool) Get(ctx context.Context) (*zfClient.ZFCookie, error) {
 
 // TryGet 非阻塞获取一个有效 cookie, 没有可用的立马返回错误
 func (p *SessionPool) TryGet(ctx context.Context) (*zfClient.ZFCookie, error) {
+	logger := logx.WithContext(ctx)
 	for {
 		select {
 		case c := <-p.cookies:
 			if time.Since(c.CreatedAt) > p.ttl {
 				continue
 			}
-			nlog.Pick().WithContext(ctx).Info("命中 session pool")
+			logger.Info("命中 session pool")
 			return c.Cookie, nil
 		default:
-			nlog.Pick().WithContext(ctx).Errorf("未命中 session pool, 当前可用 %d/%d", len(p.cookies), p.maxSize)
+			logger.Errorf("未命中 session pool, 当前可用 %d/%d", len(p.cookies), p.maxSize)
 			return nil, errors.New("session pool: 无可用 cookie")
 		}
 	}
 }
 
 // Run 启动 session pool 后台填充循环
-func (p *SessionPool) Run() {
+func (p *SessionPool) Run(ctx context.Context) {
+	logger := logx.WithContext(ctx)
 	// 预热
-	logger := nlog.Pick()
 	logger.Info("session pool: 预热填充中")
-	p.fill(p.ctx)
+	p.fill(ctx)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			p.fill(p.ctx)
-		case <-p.ctx.Done():
-			nlog.Pick().WithContext(p.ctx).Info("session pool: 停止后台填充")
+			p.fill(ctx)
+		case <-ctx.Done():
+			logger.Info("session pool: 停止后台填充")
 			return
 		}
 	}
@@ -123,7 +123,7 @@ func (p *SessionPool) Run() {
 
 // fill 清理过期 cookie 并补充到 maxSize
 func (p *SessionPool) fill(ctx context.Context) {
-	logger := nlog.Pick()
+	logger := logx.WithContext(ctx)
 	var valid []*CaptchaCookie
 	// 排空
 draining:
@@ -170,7 +170,11 @@ draining:
 
 // fillOne 填充单个 cookie, 并采取指数退避的重试策略
 func (p *SessionPool) fillOne(ctx context.Context) {
-	logger := nlog.Pick().WithContext(ctx)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	logger := logx.WithContext(ctx)
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second // 最大退避时间
 	const maxRetries = 5                // 最大重试次数
@@ -179,10 +183,10 @@ func (p *SessionPool) fillOne(ctx context.Context) {
 			return
 		}
 
-		cookie, err := zfClient.New(ctx).BypassCaptcha()
+		cookie, err := p.zf.BypassCaptcha()
 		if err != nil {
 			// 指数退避重试
-			logger.Warnf("session pool: BypassCaptcha 失败: %v, %v 后重试", err, backoff)
+			logger.Errorf("session pool: BypassCaptcha 失败: %v, %v 后重试", err, backoff)
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():

@@ -2,6 +2,7 @@ package captcha
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 	"github.com/anthonynsimon/bild/blend"
 	"github.com/anthonynsimon/bild/effect"
 	"github.com/anthonynsimon/bild/segment"
-	"github.com/zjutjh/mygo/nlog"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 //go:embed static/*.png
@@ -25,44 +26,53 @@ var templateFS embed.FS
 var (
 	templates map[string]image.Image
 	once      sync.Once
+	initErr   error
 )
 
-// loadTemplates 懒加载图片模板并生成指纹
-func loadTemplates() {
+// loadTemplates 懒加载图片模板并生成指纹。
+func loadTemplates() error {
+	logger := logx.WithContext(context.Background())
 	once.Do(func() {
 		templates = make(map[string]image.Image)
 		entries, err := templateFS.ReadDir("static")
 		if err != nil {
-			nlog.Pick().Fatalf("验证码初始化失败, 无法读取嵌入目录: %v", err)
-			panic(err)
+			initErr = fmt.Errorf("验证码初始化失败, 无法读取嵌入目录: %w", err)
+			logger.Errorf("%v", initErr)
+			return
 		}
 		for _, entry := range entries {
 			name := entry.Name()
 			if !strings.EqualFold(filepath.Ext(entry.Name()), ".png") {
-				nlog.Pick().Warnf("跳过非PNG文件: %s", name)
+				logger.Infof("跳过非PNG文件: %s", name)
 				continue
 			}
 			data, err := templateFS.ReadFile("static/" + name)
 			if err != nil {
-				nlog.Pick().Errorf("无法读取嵌入文件 %s: %v", name, err)
+				logger.Errorf("无法读取嵌入文件 %s: %v", name, err)
 				continue
 			}
 			img, _, err := image.Decode(bytes.NewReader(data))
 			if err != nil {
-				nlog.Pick().Errorf("无法解码嵌入图像 %s: %v", name, err)
+				logger.Errorf("无法解码嵌入图像 %s: %v", name, err)
 				continue
 			}
 			templates[generateFingerprint(img)] = img
 		}
-		nlog.Pick().Infof("验证码模板初始化完成, 共%d个模板", len(templates))
+		logger.Infof("验证码模板初始化完成, 共%d个模板", len(templates))
 	})
+
+	return initErr
 }
 
 func Crack(img image.Image) (string, error) {
 	if img == nil {
 		return "", fmt.Errorf("输入图片不能为空")
 	}
-	loadTemplates()
+
+	if err := loadTemplates(); err != nil {
+		return "", err
+	}
+
 	templateImg, ok := templates[generateFingerprint(img)]
 	if !ok {
 		return "", fmt.Errorf("验证码匹配模板失败")

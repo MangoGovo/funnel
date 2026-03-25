@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"funnel/captcha"
-	"funnel/comm"
+	"funnel/internal/comm"
+	"funnel/internal/svc"
+	"funnel/pkg/bizerr"
+	"funnel/pkg/util"
 	"image"
 	"net/http"
 	"strings"
@@ -15,30 +18,34 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-resty/resty/v2"
-	"github.com/sirupsen/logrus"
-	"github.com/zjutjh/mygo/nlog"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 type ZFClient struct {
-	Logger *logrus.Logger
+	logx.Logger
 }
 
 var (
 	httpClient *resty.Client
 	once       sync.Once
+	client     *ZFClient
 )
 
-func New(ctx context.Context) *ZFClient {
+func New(svcCtx *svc.ServiceContext) *ZFClient {
+	cfg := svcCtx.Config.ZF
 	once.Do(func() {
 		httpClient = resty.New()
 		httpClient.
-			SetBaseURL(comm.BizConf.ZF.BaseURL).
+			SetBaseURL(cfg.BaseURL).
 			SetRedirectPolicy(resty.NoRedirectPolicy())
 		httpClient.SetCookieJar(nil)
+
+		client = &ZFClient{
+			Logger: logx.WithContext(context.Background()),
+		}
 	})
-	return &ZFClient{
-		Logger: nlog.Pick().WithContext(ctx).Logger,
-	}
+
+	return client
 }
 
 func (c *ZFClient) R() *resty.Request {
@@ -57,16 +64,16 @@ func (c *ZFClient) BypassCaptcha() (*ZFCookie, error) {
 			"type": "resource",
 			"name": "zfdun_captcha.js",
 		}).
-		Get(comm.ZFCaptchaURL)
+		Get(comm.CaptchaURL)
 	if err != nil {
-		c.Logger.Errorf("正方验证码登陆初始化失败: %v", err)
+		c.Errorf("正方验证码登陆初始化失败: %v", err)
 		return nil, err
 	}
 	text := response.String()
-	rtk := comm.ExtractJsonStr(text, "rtk")
+	rtk := util.ExtractJsonStr(text, "rtk")
 	if rtk == "" {
 		err = fmt.Errorf("rtk解析失败")
-		c.Logger.Errorf("正方验证码登陆初始化失败: %v", err)
+		c.Errorf("正方验证码登陆初始化失败: %v", err)
 		return nil, err
 	}
 	cookies := response.Cookies()
@@ -77,9 +84,9 @@ func (c *ZFClient) BypassCaptcha() (*ZFCookie, error) {
 		SetCookies(cookies).
 		SetQueryParam("type", "refresh").
 		SetResult(&captchaData).
-		Get(comm.ZFCaptchaURL)
+		Get(comm.CaptchaURL)
 	if err != nil {
-		c.Logger.Errorf("正方获取验证码失败: %v", err)
+		c.Errorf("正方获取验证码失败: %v", err)
 		return nil, err
 	}
 
@@ -91,21 +98,21 @@ func (c *ZFClient) BypassCaptcha() (*ZFCookie, error) {
 			"id":   captchaData.Si,
 			"imtk": captchaData.Imtk,
 		}).
-		Get(comm.ZFCaptchaURL)
+		Get(comm.CaptchaURL)
 	if err != nil {
-		c.Logger.Errorf("正方下载验证码图片失败: %v", err)
+		c.Errorf("正方下载验证码图片失败: %v", err)
 		return nil, err
 	}
 	img, _, err := image.Decode(bytes.NewReader(imgResp.Body()))
 	if err != nil {
-		c.Logger.Errorf("正方下载验证码图片失败: %v", err)
+		c.Errorf("正方下载验证码图片失败: %v", err)
 		return nil, err
 	}
 
 	// 识别
 	result, err := captcha.Crack(img)
 	if err != nil {
-		c.Logger.Errorf("正方验证码识别失败: %v", err)
+		c.Errorf("正方验证码识别失败: %v", err)
 		return nil, err
 	}
 	var verifyData captchaVerifyResponse
@@ -117,18 +124,18 @@ func (c *ZFClient) BypassCaptcha() (*ZFCookie, error) {
 			"rtk":    rtk,
 			"mt":     base64.StdEncoding.EncodeToString([]byte(result)),
 			"extend": "eyJhcHBOYW1lIjoiTmV0c2NhcGUiLCJ1c2VyQWdlbnQiOiJNb3ppbGxhLzUuMCAoTWFjaW50b3NoOyBJbnRlbCBNYWMgT1MgWCAxMF8xNV83KSBBcHBsZVdlYktpdC81MzcuMzYgKEtIVE1MLCBsaWtlIEdlY2tvKSBDaHJvbWUvMTQ0LjAuMC4wIFNhZmFyaS81MzcuMzYiLCJhcHBWZXJzaW9uIjoiNS4wIChNYWNpbnRvc2g7IEludGVsIE1hYyBPUyBYIDEwXzE1XzcpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xNDQuMC4wLjAgU2FmYXJpLzUzNy4zNiJ9",
-		}).Post(comm.ZFCaptchaURL)
+		}).Post(comm.CaptchaURL)
 	if err != nil {
-		c.Logger.Errorf("正方验证码验证失败: %v", err)
+		c.Errorf("正方验证码验证失败: %v", err)
 		return nil, err
 	}
 	success := verifyData.Status == "success"
 	if !success {
 		err = fmt.Errorf("验证码验证失败: %s", verifyData.Msg)
-		c.Logger.Errorf("正方验证码验证失败: %v", err)
+		c.Errorf("正方验证码验证失败: %v", err)
 		return nil, err
 	}
-	c.Logger.Infof("验证码验证结果: %s", response.String())
+	c.Infof("验证码验证结果: %s", response.String())
 	return FromCookie(cookies), err
 }
 
@@ -142,17 +149,17 @@ func (c *ZFClient) LoginByCaptcha(username, password string) (*ZFCookie, error) 
 		return nil, err
 	}
 	cookies := zfCookies.ToCookie()
-	var publicKey LoginPublicKeyResponse
+	var publicKey loginPublicKeyResponse
 	_, err = c.R().SetCookies(cookies).
 		SetResult(&publicKey).
-		Get(comm.ZFLoginPublicKeyURL)
+		Get(comm.LoginPublicKeyURL)
 	if err != nil {
-		c.Logger.Errorf("正方获取登录公钥失败: %v", err)
+		c.Errorf("正方获取登录公钥失败: %v", err)
 		return nil, err
 	}
-	encryptedPassword, err := comm.RSAEncryptWithPublicKey(password, publicKey.Modulus, publicKey.Exponent)
+	encryptedPassword, err := util.RSAEncryptWithPublicKey(password, publicKey.Modulus, publicKey.Exponent)
 	if err != nil {
-		c.Logger.Errorf("正方加密密码失败: %v", err)
+		c.Errorf("正方加密密码失败: %v", err)
 		return nil, err
 	}
 	response, err := c.R().SetCookies(cookies).
@@ -160,7 +167,7 @@ func (c *ZFClient) LoginByCaptcha(username, password string) (*ZFCookie, error) 
 			"yhm": username,
 			"mm":  encryptedPassword,
 		}).
-		Post(comm.ZFLoginURL)
+		Post(comm.LoginURL)
 	if err != nil && !errors.Is(err, resty.ErrAutoRedirectDisabled) {
 		return nil, err
 	}
@@ -182,7 +189,7 @@ func (c *ZFClient) LoginByCaptcha(username, password string) (*ZFCookie, error) 
 
 // GetCurrentSchoolTerm 查询正方当前学年学期信息
 func (c *ZFClient) GetCurrentSchoolTerm(cookie *ZFCookie) (*SchoolTermInfo, error) {
-	response, err := c.R().SetCookies(cookie.ToCookie()).Get(comm.ZFLessonTableHome)
+	response, err := c.R().SetCookies(cookie.ToCookie()).Get(comm.LessonTableHome)
 	if err != nil {
 		return nil, err
 	}
@@ -206,8 +213,8 @@ func checkError(html string) error {
 	text := strings.TrimSpace(doc.Find("#tips").Text())
 	switch text {
 	case "用户名或密码不正确，请重新输入！":
-		return comm.WrongUsernameOrPasswordError
+		return bizerr.ErrWrongUsernameOrPassword
 	default:
-		return comm.UnknownError
+		return bizerr.ErrUnknown
 	}
 }

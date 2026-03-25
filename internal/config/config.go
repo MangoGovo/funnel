@@ -7,4 +7,6 @@ import "github.com/zeromicro/go-zero/rest"
 
 type Config struct {
 	rest.RestConf
+	ZF    ZFConfig    `json:"zf,optional"`
+	Oauth OauthConfig `json:"oauth,optional"`
 }

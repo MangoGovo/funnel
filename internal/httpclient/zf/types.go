@@ -16,7 +16,7 @@ type captchaVerifyResponse struct {
 	Status string `json:"status"`
 }
 
-type LoginPublicKeyResponse struct {
+type loginPublicKeyResponse struct {
 	Modulus  string `json:"modulus"`
 	Exponent string `json:"exponent"`
 }
